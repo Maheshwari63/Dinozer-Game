@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Chrome Dino Desert PRO</title>
+
+<style>
+body{
+  margin:0;
+  background:#f7f7f7;
+  display:flex;
+  justify-content:center;
+  align-items:center;
+  height:100vh;
+  overflow:hidden;
+  touch-action: manipulation;
+}
+canvas{
+  background:#f7f7f7;
+}
+#controls{
+  position:fixed;
+  top:10px;
+  right:10px;
+}
+button{
+  padding:8px 12px;
+  margin-left:5px;
+  font-size:14px;
+  cursor:pointer;
+}
+</style>
+</head>
+<body>
+
+<div id="controls">
+  <button onclick="togglePause()">Pause</button>
+  <button onclick="goFullScreen()">Full Screen</button>
+</div>
+
+<canvas id="game"></canvas>
+
+<script>
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+
+canvas.width = window.innerWidth;
+canvas.height = 250;
+
+let gravity = 0.6;
+let speed = 6;
+let score = 0;
+let highScore = localStorage.getItem("dinoHighScore") || 0;
+let gameOver = false;
+let paused = false;
+let frame = 0;
+
+const groundY = canvas.height - 40;
+
+const dino = {
+  x: 60,
+  y: groundY - 44,
+  velocityY: 0,
+  jumping: false
+};
+
+let obstacles = [];
+let apples = [];
+let clouds = [];
+
+/* 🎵 BACKGROUND MUSIC */
+const bgMusic = new Audio();
+bgMusic.src = "https://cdn.pixabay.com/audio/2022/03/15/audio_7c1e0c6a08.mp3";
+bgMusic.loop = true;
+bgMusic.volume = 0.3;
+
+/* 🔊 SOUND EFFECTS */
+function playJumpSound(){
+  const audio = new AudioContext();
+  const osc = audio.createOscillator();
+  osc.frequency.setValueAtTime(600, audio.currentTime);
+  osc.connect(audio.destination);
+  osc.start();
+  osc.stop(audio.currentTime+0.1);
+}
+
+function playGameOverSound(){
+  const audio = new AudioContext();
+  const osc = audio.createOscillator();
+  osc.frequency.setValueAtTime(150, audio.currentTime);
+  osc.connect(audio.destination);
+  osc.start();
+  osc.stop(audio.currentTime+0.4);
+}
+
+/* CONTROLS */
+function jump(){
+  if(paused) return;
+  if(!dino.jumping && !gameOver){
+    dino.velocityY = -12;
+    dino.jumping = true;
+    playJumpSound();
+    bgMusic.play();
+  }
+  if(gameOver) restart();
+}
+
+document.addEventListener("keydown", e=>{
+  if(e.code==="Space") jump();
+});
+
+canvas.addEventListener("touchstart", e=>{
+  e.preventDefault();
+  jump();
+});
+
+/* ⏸ PAUSE */
+function togglePause(){
+  paused = !paused;
+  if(paused){
+    bgMusic.pause();
+  }else{
+    bgMusic.play();
+    update();
+  }
+}
+
+/* 📱 FULL SCREEN */
+function goFullScreen(){
+  if(canvas.requestFullscreen){
+    canvas.requestFullscreen();
+  }
+}
+
+/* BACKGROUND */
+function drawBackground(){
+  const sky = ctx.createLinearGradient(0,0,0,canvas.height);
+  sky.addColorStop(0,"#fceabb");
+  sky.addColorStop(1,"#f8b500");
+  ctx.fillStyle = sky;
+  ctx.fillRect(0,0,canvas.width,canvas.height);
+
+  ctx.fillStyle="#e0a800";
+  ctx.beginPath();
+  ctx.arc(200, groundY+20, 150, Math.PI, 2*Math.PI);
+  ctx.arc(600, groundY+30, 200, Math.PI, 2*Math.PI);
+  ctx.fill();
+}
+
+/* CLOUDS */
+function spawnCloud(){
+  clouds.push({x:canvas.width,y:Math.random()*80+20});
+}
+function drawCloud(x,y){
+  ctx.fillStyle="rgba(255,255,255,0.8)";
+  ctx.beginPath();
+  ctx.arc(x,y,20,0,Math.PI*2);
+  ctx.arc(x+25,y+5,18,0,Math.PI*2);
+  ctx.arc(x-25,y+5,18,0,Math.PI*2);
+  ctx.fill();
+}
+
+/* DINO */
+function drawDino(){
+  ctx.fillStyle="#333";
+  ctx.fillRect(dino.x, dino.y+10, 30, 20);
+  ctx.fillRect(dino.x+22, dino.y, 20, 20);
+  ctx.fillStyle="#fff";
+  ctx.fillRect(dino.x+35, dino.y+6, 4,4);
+  ctx.fillStyle="#333";
+  ctx.fillRect(dino.x-8, dino.y+15, 10,5);
+
+  if(frame%20<10 && !dino.jumping){
+    ctx.fillRect(dino.x+5, dino.y+30, 8,10);
+    ctx.fillRect(dino.x+18, dino.y+30, 8,5);
+  }else{
+    ctx.fillRect(dino.x+5, dino.y+30, 8,5);
+    ctx.fillRect(dino.x+18, dino.y+30, 8,10);
+  }
+}
+
+/* CACTUS */
+function drawCactus(x){
+  ctx.fillStyle="#2e7d32";
+  ctx.fillRect(x, groundY-40, 20,40);
+  ctx.fillRect(x-6, groundY-25,6,15);
+  ctx.fillRect(x+20, groundY-25,6,15);
+}
+
+/* APPLE */
+function drawApple(x,y){
+  ctx.fillStyle="red";
+  ctx.beginPath();
+  ctx.arc(x,y,7,0,Math.PI*2);
+  ctx.fill();
+  ctx.fillStyle="green";
+  ctx.fillRect(x-2,y-10,4,5);
+}
+
+/* SPAWN */
+function spawnObstacle(){ obstacles.push({x:canvas.width}); }
+function spawnApple(){ apples.push({x:canvas.width,y:groundY-80}); }
+
+/* UPDATE */
+function update(){
+  if(gameOver || paused) return;
+
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  drawBackground();
+
+  clouds.forEach((c,i)=>{
+    c.x -= speed*0.3;
+    drawCloud(c.x,c.y);
+    if(c.x<-50) clouds.splice(i,1);
+  });
+
+  ctx.strokeStyle="#8b5e3c";
+  ctx.beginPath();
+  ctx.moveTo(0,groundY);
+  ctx.lineTo(canvas.width,groundY);
+  ctx.stroke();
+
+  dino.y += dino.velocityY;
+  dino.velocityY += gravity;
+
+  if(dino.y>=groundY-44){
+    dino.y=groundY-44;
+    dino.jumping=false;
+  }
+
+  drawDino();
+
+  obstacles.forEach((obs,i)=>{
+    obs.x-=speed;
+    drawCactus(obs.x);
+
+    if(dino.x<obs.x+20 && dino.x+30>obs.x && dino.y+30>groundY-40){
+      endGame();
+    }
+
+    if(obs.x<-20){
+      obstacles.splice(i,1);
+      score++;
+      speed+=0.2;
+    }
+  });
+
+  apples.forEach((apple,i)=>{
+    apple.x-=speed;
+    drawApple(apple.x,apple.y);
+
+    if(dino.x<apple.x+7 && dino.x+30>apple.x-7 &&
+       dino.y<apple.y+7 && dino.y+30>apple.y-7){
+      apples.splice(i,1);
+      score+=5;
+    }
+
+    if(apple.x<-10) apples.splice(i,1);
+  });
+
+  if(score>highScore){
+    highScore=score;
+    localStorage.setItem("dinoHighScore",highScore);
+  }
+
+  ctx.fillStyle="#333";
+  ctx.font="20px monospace";
+  ctx.fillText("Score: "+score, canvas.width-200,30);
+  ctx.fillText("High: "+highScore, canvas.width-200,60);
+
+  frame++;
+  requestAnimationFrame(update);
+}
+
+/* GAME OVER */
+function endGame(){
+  gameOver=true;
+  bgMusic.pause();
+  playGameOverSound();
+  ctx.fillStyle="#000";
+  ctx.font="30px monospace";
+  ctx.fillText("GAME OVER",canvas.width/2-100,120);
+  ctx.font="16px monospace";
+  ctx.fillText("Tap or Press Space to Restart",canvas.width/2-170,150);
+}
+
+/* RESTART */
+function restart(){
+  obstacles=[];
+  apples=[];
+  clouds=[];
+  score=0;
+  speed=6;
+  gameOver=false;
+  dino.y=groundY-44;
+  dino.velocityY=0;
+  bgMusic.play();
+  update();
+}
+
+setInterval(spawnObstacle,1500);
+setInterval(spawnApple,3500);
+setInterval(spawnCloud,3000);
+
+update();
+</script>
+
+</body>
+</html>
